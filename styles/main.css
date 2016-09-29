@@ -38,6 +38,7 @@ body.landing {
     -webkit-transform: translateY(-50%);
     -moz-transform: translateY(50%);
     -ms-transform: translateY(50%);
+    transform: translateY(-50%);
     width: 100%;     /* makes the title inhabit the full width of its container */
     text-align: center;    /* aligns text in the horinzontal center of the element */
     font-size: 4rem;     /* specifies the size of the font in root em units */
