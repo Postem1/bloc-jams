@@ -13,7 +13,6 @@ var albumPicasso = {
     ]
 };
  
- // Another Example Album
 var albumMarconi = {
     title: 'The Telephone',
     artist: 'Guglielmo Marconi',
@@ -26,6 +25,22 @@ var albumMarconi = {
         { title: 'Fits in your pocket', duration: '3:21'},
         { title: 'Can you hear me now?', duration: '3:14' },
         { title: 'Wrong phone number', duration: '2:15'}
+    ]
+};
+
+
+var albumSP = {
+    title: 'Dutty Rock',
+    artist: 'Sean Paul',
+    label: 'VP Records',
+    year: '2002',
+    albumArtUrl: 'assets/images/album_covers/sean_paul.png',
+    songs: [
+        { title: 'Gimme the Light', duration: '3:46' },
+        { title: 'Punkie', duration: '3:35' },
+        { title: 'Get Busy', duration: '3:32'},
+        { title: 'Like Glue', duration: '3:54' },
+        { title: 'Hello there', duration: '5:50' }
     ]
 };
 
@@ -55,12 +70,26 @@ var setCurrentAlbum = function(album) {
  
     albumSongList.innerHTML = '';
  
-     // #4
     for (var i = 0; i < album.songs.length; i++) {
          albumSongList.innerHTML += createSongRow(i + 1, album.songs[i].title, album.songs[i].duration);
     }
 };
- 
- window.onload = function() {
-     setCurrentAlbum(albumPicasso);
- };
+
+    var albumImage = document.getElementsByClassName('album-cover-art')[0];
+
+
+window.onload = function() {
+    setCurrentAlbum(albumPicasso);
+    var albumCovers = [albumPicasso, albumMarconi, albumSP];
+    var index = 1;
+
+    albumImage.addEventListener('click', function(){
+    setCurrentAlbum(albumCovers[index]);
+    index++
+        if (index == albumCovers.length){
+        index = 0;
+        }
+    });
+};
+
+
