@@ -1,3 +1,4 @@
+'use strict';
 
 var playButtonTemplate = '<a class="album-song-button"><span class="ion-play"></span></a>';
 
@@ -171,6 +172,10 @@ var setCurrentAlbum = function(album) { // album is an object with many properti
 
 var updateSeekBarWhileSongPlays = function() {
     if (currentSoundFile) {
+        // Unbind any previously-attached timeupdate handler before
+        // re-binding — otherwise pause/resume cycles on the same
+        // buzz.sound instance accumulate listeners.
+        currentSoundFile.unbind('timeupdate');
         //timeupdate is a custom Buzz event that fires repeatedly while time elapses during song playback
         currentSoundFile.bind('timeupdate', function(event) {
         // We use Buzz's getTime()  to get the current time of the song and

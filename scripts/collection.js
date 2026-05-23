@@ -1,3 +1,5 @@
+'use strict';
+
     var buildCollectionItemTemplate = function() {
         var template =
          '<div class="collection-album-container column fourth">'
@@ -18,7 +20,7 @@
     };
     
 
-$(window).load(function() {
+$(window).on('load', function() {
     var $collectionContainer = $('.album-covers');
     
     $collectionContainer.empty();

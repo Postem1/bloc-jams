@@ -1,3 +1,4 @@
+'use strict';
 
     var animatePoints = function() {
 
@@ -11,7 +12,7 @@
         $.each($('.point'), revealPoint);
     };
 
-$(window).load(function(){
+$(window).on('load', function(){
 
     if ($(window).height() > 950) {
         animatePoints();
