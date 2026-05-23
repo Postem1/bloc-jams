@@ -424,8 +424,32 @@ var previousSong = function() {
     setSongButton(getSongButton(previousSongNumber), 'number');
 };
 
+// Pull the requested album id from the URL (?album=<id>); fall back
+// to BlocJams.defaultAlbumId if missing/unknown.
+var getRequestedAlbum = function() {
+    var match = /[?&]album=([^&]+)/.exec(window.location.search);
+    var requestedId = match ? decodeURIComponent(match[1]) : null;
+    var catalog = (window.BlocJams && window.BlocJams.albums) || {};
+    var fallbackId = (window.BlocJams && window.BlocJams.defaultAlbumId) || null;
+
+    if (requestedId && catalog[requestedId]) {
+        return catalog[requestedId];
+    }
+    if (fallbackId && catalog[fallbackId]) {
+        return catalog[fallbackId];
+    }
+    // Last-resort fallback for safety — fixtures.js still exports this
+    // legacy global as an alias.
+    return typeof albumPicasso !== 'undefined' ? albumPicasso : null;
+};
+
 $(document).ready(function() {
-    setCurrentAlbum(albumPicasso);
+    var album = getRequestedAlbum();
+    if (album) {
+        setCurrentAlbum(album);
+    } else {
+        console.error('No album available — fixtures.js may not have loaded.');
+    }
     setupSeekBars();
     $previousButton.click(previousSong);
     $nextButton.click(nextSong);
