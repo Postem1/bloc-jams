@@ -8,7 +8,11 @@ function buildCollectionTile(albumId, album) {
   const href = `album.html?album=${encodeURIComponent(albumId)}`;
 
   const tile = document.createElement('div');
-  tile.className = 'collection-album-container column fourth';
+  // Grid handles sizing now (see styles/collection.css). The
+  // .column.fourth float-layout classes are gone — they hardcoded
+  // a 4-column grid which only looked balanced when the catalog
+  // size was a multiple of 4.
+  tile.className = 'collection-album-container';
 
   const img = document.createElement('img');
   img.src = album.albumArtUrl;

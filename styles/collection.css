@@ -6,14 +6,19 @@ background-position: center center;
 background-size: cover;
 }
 
+/* Responsive tile grid. `auto-fill` packs as many 240-pixel-min
+   columns as the viewport allows, so the grid stays balanced no
+   matter how many albums are in the catalog. Replaces the old
+   .column.fourth float layout which only looked right with exactly
+   4, 8, 12, ... tiles. */
 .album-covers {
-    position: relative;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 2rem 1rem;
+    padding: 2rem 1rem;
 }
 
 .collection-album-container {
-    position: relative;
-    margin-top: 30px;
-    margin-bottom: 20px;
     text-align: center;
 }
 
