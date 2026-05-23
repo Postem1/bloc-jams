@@ -4,7 +4,16 @@
     left: 0;
     right: 0;
     height: 200px;
-    background-color: rgba(255, 255, 255, 0.3);
+    /* Frosted-glass effect: a low-opacity tint plus a blur on whatever
+       is behind the bar. Before this, the 30% white tint alone let the
+       song list show through clearly when the page was scrolled to the
+       top, which looked like overlapping/double content. The blur
+       obscures the underlying content while keeping the see-through
+       aesthetic. saturate() compensates for the desaturation that
+       comes with the blur. */
+    background-color: rgba(255, 255, 255, 0.35);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
     z-index: 100;
 }
 
