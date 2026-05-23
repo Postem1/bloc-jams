@@ -343,7 +343,17 @@ var setTotalTimeInPlayerBar = function(totalTime) {
 };
 
 var togglePlayFromPlayerBar = function() {
-    if (!currentSoundFile) return;
+    // Cold start: nothing loaded yet. Treat the first click on the
+    // player-bar ▶ as "start the album" — load song 1 and play it,
+    // mirroring what clicking the song's row button would do.
+    if (!currentSoundFile) {
+        setSong(1);
+        currentSoundFile.play();
+        updateSeekBarWhileSongPlays();
+        setSongButton(getSongButton(currentlyPlayingSongNumber), 'pause');
+        updatePlayerBarSong(); // also flips the play-pause button to 'playing'
+        return;
+    }
 
     var $currentSongBtn = getSongButton(currentlyPlayingSongNumber);
 
