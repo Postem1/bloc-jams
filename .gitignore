@@ -1,1 +1,11 @@
 .understand-anything/
+
+# Node / build artifacts
+node_modules/
+dist/
+coverage/
+.vite/
+
+# OS / editor cruft
+.DS_Store
+*.log
