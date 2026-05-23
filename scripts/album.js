@@ -1,486 +1,443 @@
+// Player controller for album.html. Vanilla DOM + native <audio>;
+// no jQuery, no Buzz. Imports the pure helpers extracted in Phase 2
+// for time formatting, URL → album resolution, and next/prev index
+// math (all covered by the vitest suite).
+
 import { albums, defaultAlbumId, albumPicasso } from './fixtures.js';
+import { filterTimeCode } from './lib/format.js';
+import { resolveAlbumFromUrl } from './lib/album-selection.js';
+import {
+  getNextSongPositions,
+  getPreviousSongPositions
+} from './lib/track-navigation.js';
 
 // ---- inner-content snippets (swap into existing <button> wrappers) ----
-var PLAY_ICON = '<span class="ion-play" aria-hidden="true"></span>';
-var PAUSE_ICON = '<span class="ion-pause" aria-hidden="true"></span>';
+const PLAY_ICON = '<span class="ion-play" aria-hidden="true"></span>';
+const PAUSE_ICON = '<span class="ion-pause" aria-hidden="true"></span>';
 
 // ---- module state ----
-var currentlyPlayingSongNumber = null;
-var currentAlbum = null;
-var currentSongFromAlbum = null;
-var currentSoundFile = null; // HTMLAudioElement
-var currentVolume = 50; // 0–100; converted to 0–1 for audio.volume
+let currentlyPlayingSongNumber = null;
+let currentAlbum = null;
+let currentSongFromAlbum = null;
+let currentSoundFile = null; // HTMLAudioElement
+let currentVolume = 50;      // 0–100; converted to 0–1 for audio.volume
 
-// Reference to the active timeupdate listener so we can remove the
-// previous one before adding a new one (HTMLAudioElement doesn't have
-// the equivalent of Buzz's .unbind('timeupdate') that drops all
-// listeners by event name).
-var timeUpdateHandler = null;
+// HTMLAudioElement doesn't have an .unbind('event') that drops every
+// listener for a given event name (like Buzz did), so we keep a
+// reference to the active timeupdate listener and remove it
+// explicitly before adding a new one.
+let timeUpdateHandler = null;
 
-// ---- cached player-bar selectors ----
-var $previousButton = $('.main-controls .previous');
-var $playPauseButton = $('.main-controls .play-pause');
-var $nextButton = $('.main-controls .next');
+// ---- cached DOM refs (populated by init()) ----
+let previousButton = null;
+let playPauseButton = null;
+let nextButton = null;
 
-// ---- low-level player ops ----
-var seek = function(time) {
-    if (currentSoundFile) {
-        currentSoundFile.currentTime = time;
-    }
-};
+// ---- tiny DOM helpers ----
+function $(selector, root = document) {
+  return root.querySelector(selector);
+}
 
-var setVolume = function(volume) {
-    if (currentSoundFile) {
-        // HTMLAudioElement.volume is 0–1; callers pass 0–100 (matches
-        // the % the UI shows and what Buzz used to take).
-        currentSoundFile.volume = Math.max(0, Math.min(1, volume / 100));
-    }
-};
+function $$(selector, root = document) {
+  return Array.from(root.querySelectorAll(selector));
+}
+
+// Parse a snippet of HTML into a single detached element. Uses a
+// <template> so things like <tr> outside a <table> parse correctly.
+function elementFromHtml(html) {
+  const template = document.createElement('template');
+  template.innerHTML = html.trim();
+  return template.content.firstElementChild;
+}
+
+// ---- low-level audio ops ----
+function seek(time) {
+  if (currentSoundFile) {
+    currentSoundFile.currentTime = time;
+  }
+}
+
+function setVolume(volume) {
+  if (currentSoundFile) {
+    // HTMLAudioElement.volume is 0–1 and throws on out-of-range;
+    // callers pass 0–100 to match the UI percentage.
+    currentSoundFile.volume = Math.max(0, Math.min(1, volume / 100));
+  }
+}
 
 // ---- per-song button helpers ----
 //
-// Each song row's number cell contains a real <button> (not an <a>), so
-// keyboard users can tab to it and press Enter/Space to play. Its
-// visible content swaps between the song number (idle), play icon
+// Each song row's number cell contains a real <button>, so keyboard
+// users can tab to it and press Enter/Space to play. Its visible
+// content swaps between the song number (idle), play icon
 // (hover/focus), and pause icon (currently playing).
-var songButtonMarkup = function(songNumber) {
-    return '<button type="button" class="album-song-button" data-song-number="'
-        + songNumber + '" aria-label="Play song ' + songNumber + '">'
-        + songNumber + '</button>';
-};
 
-var getSongButton = function(songNumber) {
-    return $('.album-song-button[data-song-number="' + songNumber + '"]');
-};
+function songButtonMarkup(songNumber) {
+  return `<button type="button" class="album-song-button" data-song-number="${songNumber}" aria-label="Play song ${songNumber}">${songNumber}</button>`;
+}
 
-// Drive the button's visible content + aria-label from a single state
-// argument so the icon and the announced label can't drift apart.
-var setSongButton = function($btn, state) {
-    var songNumber = parseInt($btn.attr('data-song-number'), 10);
-    if (state === 'play') {
-        $btn.html(PLAY_ICON).attr('aria-label', 'Play song ' + songNumber);
-    } else if (state === 'pause') {
-        $btn.html(PAUSE_ICON).attr('aria-label', 'Pause song ' + songNumber);
-    } else { // 'number'
-        $btn.html(songNumber).attr('aria-label', 'Play song ' + songNumber);
-    }
-};
+function getSongButton(songNumber) {
+  return $(`.album-song-button[data-song-number="${songNumber}"]`);
+}
+
+function setSongButton(btn, state) {
+  if (!btn) return;
+  const songNumber = parseInt(btn.getAttribute('data-song-number'), 10);
+  if (state === 'play') {
+    btn.innerHTML = PLAY_ICON;
+    btn.setAttribute('aria-label', `Play song ${songNumber}`);
+  } else if (state === 'pause') {
+    btn.innerHTML = PAUSE_ICON;
+    btn.setAttribute('aria-label', `Pause song ${songNumber}`);
+  } else {
+    btn.textContent = String(songNumber);
+    btn.setAttribute('aria-label', `Play song ${songNumber}`);
+  }
+}
 
 // ---- player-bar play-pause helper ----
-var setPlayPauseButton = function(state) {
-    // state: 'playing' or 'paused'
-    if (state === 'playing') {
-        $playPauseButton.html(PAUSE_ICON).attr('aria-label', 'Pause');
-    } else {
-        $playPauseButton.html(PLAY_ICON).attr('aria-label', 'Play');
-    }
-};
+function setPlayPauseButton(state) {
+  if (state === 'playing') {
+    playPauseButton.innerHTML = PAUSE_ICON;
+    playPauseButton.setAttribute('aria-label', 'Pause');
+  } else {
+    playPauseButton.innerHTML = PLAY_ICON;
+    playPauseButton.setAttribute('aria-label', 'Play');
+  }
+}
 
 // ---- main playback ops ----
-// assigns value to currentlyPlayingSongNumber and currentSoundFile.  Sets volume level
-var setSong = function(songNumber) {
-    if (currentSoundFile) {
-        currentSoundFile.pause(); // stop the old element before discarding
-    }
-    // New audio element → no listener attached yet. Clear the ref so
-    // updateSeekBarWhileSongPlays doesn't try to remove a listener from
-    // the new element using a stale handler from the old one.
-    timeUpdateHandler = null;
+function setSong(songNumber) {
+  if (currentSoundFile) {
+    currentSoundFile.pause();
+  }
+  // New audio element → reset the listener ref so
+  // updateSeekBarWhileSongPlays doesn't try to remove a stale handler.
+  timeUpdateHandler = null;
 
-    currentlyPlayingSongNumber = parseInt(songNumber);
-    currentSongFromAlbum = currentAlbum.songs[songNumber - 1];
-    currentSoundFile = new Audio(currentSongFromAlbum.audioUrl);
-    currentSoundFile.preload = 'auto'; // match Buzz's old default
-    setVolume(currentVolume);
-};
+  currentlyPlayingSongNumber = parseInt(songNumber, 10);
+  currentSongFromAlbum = currentAlbum.songs[songNumber - 1];
+  currentSoundFile = new Audio(currentSongFromAlbum.audioUrl);
+  currentSoundFile.preload = 'auto';
+  setVolume(currentVolume);
+}
 
-var updatePlayerBarSong = function() {
-    $('.currently-playing .song-name').text(currentSongFromAlbum.title);
-    $('.currently-playing .artist-name').text(currentAlbum.artist);
-    $('.currently-playing .artist-song-mobile').text(currentSongFromAlbum.title + " - " + currentAlbum.artist);
-    setPlayPauseButton('playing');
+function updatePlayerBarSong() {
+  $('.currently-playing .song-name').textContent = currentSongFromAlbum.title;
+  $('.currently-playing .artist-name').textContent = currentAlbum.artist;
+  $('.currently-playing .artist-song-mobile').textContent =
+    `${currentSongFromAlbum.title} - ${currentAlbum.artist}`;
+  setPlayPauseButton('playing');
+  setTotalTimeInPlayerBar(currentSongFromAlbum.duration);
+}
 
-    setTotalTimeInPlayerBar(currentSongFromAlbum.duration);
-};
+// ---- song row construction ----
+function createSongRow(songNumber, songName, songLength) {
+  const html =
+    '<tr class="album-view-song-item">'
+    + '<td class="song-item-number">' + songButtonMarkup(songNumber) + '</td>'
+    + '<td class="song-item-title">' + songName + '</td>'
+    + '<td class="song-item-duration">' + filterTimeCode(songLength) + '</td>'
+    + '</tr>';
 
-// Creates a row for a song with the song's number in the album, name of the song, the song's length
-var createSongRow = function(songNumber, songName, songLength) {
+  const row = elementFromHtml(html);
 
-    var template =
-        '<tr class="album-view-song-item">'
-        + '<td class="song-item-number">' + songButtonMarkup(songNumber) + '</td>'
-        + '<td class="song-item-title">' + songName + '</td>'
-        + '<td class="song-item-duration">' + filterTimeCode(songLength) + '</td>'
-        + '</tr>';
+  // Click handler — bound to the inner <button>. Enter/Space on the
+  // focused button fires a click natively, so mouse + keyboard share
+  // this path.
+  function clickHandler() {
+    const btn = this;
+    const songNumber = parseInt(btn.getAttribute('data-song-number'), 10);
 
-    var $row = $(template);
-
-    // Click handler: bound to the inner <button>. Enter/Space on the
-    // focused button fires a click event natively, so mouse + keyboard
-    // share this path.
-    var clickHandler = function() {
-        var $btn = $(this);
-        var songNumber = parseInt($btn.attr('data-song-number'), 10);
-
-        // Revert the previously playing button to its number, if any.
-        if (currentlyPlayingSongNumber !== null && currentlyPlayingSongNumber !== songNumber) {
-            setSongButton(getSongButton(currentlyPlayingSongNumber), 'number');
-        }
-
-        if (currentlyPlayingSongNumber !== songNumber) {
-            // Picking a new song.
-            setSong(songNumber);
-            currentSoundFile.play();
-            updateSeekBarWhileSongPlays();
-            setSongButton($btn, 'pause');
-
-            // Re-anchor the volume slider visuals to currentVolume.
-            var $volumeBar = $('.volume .seek-bar');
-            $volumeBar.find('.fill').width(currentVolume + '%');
-            $volumeBar.find('.thumb').css({left: currentVolume + '%'});
-            $volumeBar.attr('aria-valuenow', currentVolume);
-
-            updatePlayerBarSong();
-
-        } else {
-            // Re-clicked the currently-loaded song: toggle play/pause.
-            if (currentSoundFile.paused) {
-                setSongButton($btn, 'pause');
-                setPlayPauseButton('playing');
-                currentSoundFile.play();
-                updateSeekBarWhileSongPlays();
-            } else {
-                setSongButton($btn, 'play');
-                setPlayPauseButton('paused');
-                currentSoundFile.pause();
-            }
-        }
-    };
-
-    // Show play icon on hover OR focus (keyboard parity). focusin/out
-    // bubble (unlike focus/blur), so they fire when a descendant — i.e.
-    // the song's button — gains/loses focus.
-    var onActivate = function() {
-        var $btn = $(this).find('.album-song-button');
-        var songNumber = parseInt($btn.attr('data-song-number'), 10);
-        if (songNumber !== currentlyPlayingSongNumber) {
-            setSongButton($btn, 'play');
-        }
-    };
-
-    var onDeactivate = function() {
-        var $btn = $(this).find('.album-song-button');
-        var songNumber = parseInt($btn.attr('data-song-number'), 10);
-        if (songNumber !== currentlyPlayingSongNumber) {
-            setSongButton($btn, 'number');
-        }
-    };
-
-    $row.find('.album-song-button').click(clickHandler);
-    $row.on('mouseenter focusin', onActivate);
-    $row.on('mouseleave focusout', onDeactivate);
-
-    return $row;
-};
-
-var setCurrentAlbum = function(album) { // album is an object with many properties
-
-    currentAlbum = album;
-
-    var $albumTitle = $('.album-view-title');
-    var $albumArtist = $('.album-view-artist');
-    var $albumReleaseInfo = $('.album-view-release-info');
-    var $albumImage = $('.album-cover-art');
-    var $albumSongList = $('.album-view-song-list');
-
-    //uses the properties from album object to generate appropriate html for a given album
-    $albumTitle.text(album.title);
-    $albumArtist.text(album.artist);
-    $albumReleaseInfo.text(album.year + ' ' + album.label);
-    $albumImage.attr('src', album.albumArtUrl);
-    $albumSongList.empty(); // be sure no songs are currently in the element
-
-    // goes through all the songs from the specified album object. Insert them into the HTML, one by one.
-    for (var i = 0; i < album.songs.length; i++) {
-        var $newRow = createSongRow(i + 1, album.songs[i].title, album.songs[i].duration);
-        $albumSongList.append($newRow);
-    }
-};
-
-var updateSeekBarWhileSongPlays = function() {
-    if (!currentSoundFile) return;
-
-    // Remove the previous handler before adding a new one — otherwise
-    // pause/resume cycles on the same HTMLAudioElement would stack
-    // listeners. (When setSong creates a new element, timeUpdateHandler
-    // is reset to null so this branch is a no-op.)
-    if (timeUpdateHandler) {
-        currentSoundFile.removeEventListener('timeupdate', timeUpdateHandler);
+    // Revert the previously playing button to its number, if any.
+    if (currentlyPlayingSongNumber !== null && currentlyPlayingSongNumber !== songNumber) {
+      setSongButton(getSongButton(currentlyPlayingSongNumber), 'number');
     }
 
-    // Use a named handler so we can remove it specifically later.
-    timeUpdateHandler = function() {
-        // `duration` is NaN until metadata loads; guard against that.
-        var duration = currentSoundFile.duration;
-        var ratio = (duration > 0 && Number.isFinite(duration))
-            ? currentSoundFile.currentTime / duration
-            : 0;
-        var $seekBar = $('.seek-control .seek-bar');
-        updateSeekPercentage($seekBar, ratio);
-        setCurrentTimeInPlayerBar(currentSoundFile.currentTime);
-    };
-    currentSoundFile.addEventListener('timeupdate', timeUpdateHandler);
-};
+    if (currentlyPlayingSongNumber !== songNumber) {
+      // Picking a new song.
+      setSong(songNumber);
+      currentSoundFile.play();
+      updateSeekBarWhileSongPlays();
+      setSongButton(btn, 'pause');
 
-var updateSeekPercentage = function($seekBar, seekBarFillRatio) {
-    var offsetXPercent = seekBarFillRatio * 100;
+      // Re-anchor the volume slider visuals to currentVolume.
+      const volumeBar = $('.volume .seek-bar');
+      volumeBar.querySelector('.fill').style.width = currentVolume + '%';
+      volumeBar.querySelector('.thumb').style.left = currentVolume + '%';
+      volumeBar.setAttribute('aria-valuenow', String(currentVolume));
 
-    offsetXPercent = Math.max(0, offsetXPercent); // make sure offsetXPercent isn't less than zero
-    offsetXPercent = Math.min(100, offsetXPercent);  //make  our percentage isn't greater than 100
-
-    var percentageString = offsetXPercent + '%'; // converts percentage to string to use css
-
-    $seekBar.find('.fill').width(percentageString); //fills bar with background appropriately
-    $seekBar.find('.thumb').css({left: percentageString}); // moves the thumb to porportion
-
-    // Keep aria-valuenow in sync with the visual fill so screen readers
-    // announce the current position when the slider is focused.
-    $seekBar.attr('aria-valuenow', Math.round(offsetXPercent));
-};
-
-// Returns 'volume' or 'seek' for a given $seekBar — both use the same
-// .seek-bar class so we have to look at the parent control-group.
-var seekBarKind = function($seekBar) {
-    return $seekBar.parent().hasClass('seek-control') ? 'seek' : 'volume';
-};
-
-// Apply a 0–1 ratio to whichever bar was just interacted with: jumps
-// the song position or sets the player volume. Also updates the visual
-// fill + aria-valuenow via updateSeekPercentage.
-var applySeekRatio = function($seekBar, ratio) {
-    ratio = Math.max(0, Math.min(1, ratio));
-    if (seekBarKind($seekBar) === 'seek') {
-        if (currentSoundFile) {
-            seek(ratio * currentSoundFile.duration);
-        }
+      updatePlayerBarSong();
     } else {
-        var volume = ratio * 100;
-        setVolume(volume);
-        currentVolume = volume; // persist so the next setSong() respects it
-    }
-    updateSeekPercentage($seekBar, ratio);
-};
-
-var setupSeekBars = function() {
-
-    //selects both seek bars
-    var $seekBars = $('.player-bar .seek-bar');
-
-    $seekBars.click(function(event) { // respond to clicking on a seekbar
-        // subtracting $(this).offset().left from the event.pageX value gives us a proportion of the seek bar
-        var offsetX = event.pageX - $(this).offset().left;
-        var barWidth = $(this).width();
-        var seekBarFillRatio = offsetX / barWidth;
-        applySeekRatio($(this), seekBarFillRatio);
-    });
-
-    $seekBars.find('.thumb').mousedown(function() { // place the white ball on a specific location on the seek bar when user press down and drags
-
-        var $seekBar = $(this).parent();  // selects the seekbar that the mousedown event fired on
-
-        // we want to be able to move around the entire document to choose a certain song duration
-        $(document).bind('mousemove.thumb', function(event){
-        //bind allows us to namespace event listeners.
-        //jQuery event namespaces are offset with a period and followed by a string.
-            var offsetX = event.pageX - $seekBar.offset().left;
-            var barWidth = $seekBar.width();
-            var seekBarFillRatio = offsetX / barWidth;
-            applySeekRatio($seekBar, seekBarFillRatio);
-        });
-
-        $(document).bind('mouseup.thumb', function() {
-            $(document).unbind('mousemove.thumb');
-            $(document).unbind('mouseup.thumb');
-        });
-    });
-
-    // Keyboard support — WAI-ARIA slider pattern. Arrow keys nudge by
-    // 5%, PageUp/PageDown jump 10%, Home/End jump to extremes.
-    $seekBars.on('keydown', function(event) {
-        var step;
-        switch (event.key) {
-            case 'ArrowLeft':
-            case 'ArrowDown':
-                step = -5; break;
-            case 'ArrowRight':
-            case 'ArrowUp':
-                step = 5; break;
-            case 'PageDown':
-                step = -10; break;
-            case 'PageUp':
-                step = 10; break;
-            case 'Home':
-                step = -100; break; // clamps to 0
-            case 'End':
-                step = 100; break;  // clamps to 100
-            default:
-                return;
-        }
-        event.preventDefault();
-
-        var currentValue = parseInt($(this).attr('aria-valuenow'), 10) || 0;
-        var newValue = Math.max(0, Math.min(100, currentValue + step));
-        applySeekRatio($(this), newValue / 100);
-    });
-};
-
-//takes in time in seconds and return the time in the format X:XX
-var filterTimeCode = function(timeInSeconds) {
-    var roundedTime = Math.floor(parseFloat(timeInSeconds));
-    var minutes = Math.floor(roundedTime / 60);
-    var seconds = Math.floor(roundedTime % 60);
-    if (roundedTime < 10) {
-        return minutes + ':0' + seconds;
-    } else {
-        return minutes + ':' + seconds;
-    }
-};
-
-var setCurrentTimeInPlayerBar = function(currentTime) {
-    if (currentSoundFile) {
-        $('.current-time').text(filterTimeCode(currentTime));
-    }
-};
-
-//sets the text of the element with the .total-time class to the length of the song
-var setTotalTimeInPlayerBar = function(totalTime) {
-    if (currentSoundFile) {
-        $('.total-time').text(filterTimeCode(totalTime));
-    }
-};
-
-var togglePlayFromPlayerBar = function() {
-    // Cold start: nothing loaded yet. Treat the first click on the
-    // player-bar ▶ as "start the album" — load song 1 and play it,
-    // mirroring what clicking the song's row button would do.
-    if (!currentSoundFile) {
-        setSong(1);
-        currentSoundFile.play();
-        updateSeekBarWhileSongPlays();
-        setSongButton(getSongButton(currentlyPlayingSongNumber), 'pause');
-        updatePlayerBarSong(); // also flips the play-pause button to 'playing'
-        return;
-    }
-
-    var $currentSongBtn = getSongButton(currentlyPlayingSongNumber);
-
-    if (currentSoundFile.paused) {
-        setSongButton($currentSongBtn, 'pause');
+      // Re-clicked the currently-loaded song: toggle play/pause.
+      if (currentSoundFile.paused) {
+        setSongButton(btn, 'pause');
         setPlayPauseButton('playing');
         currentSoundFile.play();
         updateSeekBarWhileSongPlays();
-    } else {
-        setSongButton($currentSongBtn, 'play');
+      } else {
+        setSongButton(btn, 'play');
         setPlayPauseButton('paused');
         currentSoundFile.pause();
+      }
     }
-};
+  }
 
-//helper function to get a songs position in the songs array
-var trackIndex = function(album, song) {
-    return album.songs.indexOf(song);
-};
-
-// used for player bar
-var nextSong = function() {
-
-    //returns the number of the song that was playing _before_ this transition.
-    //If we just wrapped around (new index 0), the previously playing track is the last one.
-    var getPreviousSongNumber = function(newIndex) {
-        return newIndex === 0 ? currentAlbum.songs.length : newIndex;
-    };
-
-    //return (array) index position of current song
-    var currentSongIndex = trackIndex(currentAlbum, currentSongFromAlbum);
-
-    // Note that we're _incrementing_ the song here
-    currentSongIndex++;
-
-    if (currentSongIndex >= currentAlbum.songs.length) {
-        currentSongIndex = 0;
+  // Show play icon on hover OR focus (keyboard parity). focusin/out
+  // bubble (unlike focus/blur), so they fire when a descendant — the
+  // song's button — gains/loses focus.
+  function onActivate() {
+    const btn = this.querySelector('.album-song-button');
+    const songNumber = parseInt(btn.getAttribute('data-song-number'), 10);
+    if (songNumber !== currentlyPlayingSongNumber) {
+      setSongButton(btn, 'play');
     }
+  }
 
-    var previousSongNumber = getPreviousSongNumber(currentSongIndex);
+  function onDeactivate() {
+    const btn = this.querySelector('.album-song-button');
+    const songNumber = parseInt(btn.getAttribute('data-song-number'), 10);
+    if (songNumber !== currentlyPlayingSongNumber) {
+      setSongButton(btn, 'number');
+    }
+  }
 
-    // Assigns a new current song number
-    setSong(currentSongIndex + 1);
+  row.querySelector('.album-song-button').addEventListener('click', clickHandler);
+  row.addEventListener('mouseenter', onActivate);
+  row.addEventListener('focusin', onActivate);
+  row.addEventListener('mouseleave', onDeactivate);
+  row.addEventListener('focusout', onDeactivate);
 
+  return row;
+}
+
+function setCurrentAlbum(album) {
+  currentAlbum = album;
+  $('.album-view-title').textContent = album.title;
+  $('.album-view-artist').textContent = album.artist;
+  $('.album-view-release-info').textContent = `${album.year} ${album.label}`;
+  $('.album-cover-art').setAttribute('src', album.albumArtUrl);
+
+  const songList = $('.album-view-song-list');
+  songList.replaceChildren(); // clear any prior rows
+  for (let i = 0; i < album.songs.length; i++) {
+    songList.append(createSongRow(i + 1, album.songs[i].title, album.songs[i].duration));
+  }
+}
+
+// ---- seek bar plumbing ----
+function updateSeekBarWhileSongPlays() {
+  if (!currentSoundFile) return;
+
+  if (timeUpdateHandler) {
+    currentSoundFile.removeEventListener('timeupdate', timeUpdateHandler);
+  }
+
+  timeUpdateHandler = function() {
+    // duration is NaN until metadata loads — guard.
+    const duration = currentSoundFile.duration;
+    const ratio = (duration > 0 && Number.isFinite(duration))
+      ? currentSoundFile.currentTime / duration
+      : 0;
+    updateSeekPercentage($('.seek-control .seek-bar'), ratio);
+    setCurrentTimeInPlayerBar(currentSoundFile.currentTime);
+  };
+  currentSoundFile.addEventListener('timeupdate', timeUpdateHandler);
+}
+
+function updateSeekPercentage(seekBar, ratio) {
+  const percent = Math.max(0, Math.min(100, ratio * 100));
+  const percentString = percent + '%';
+  seekBar.querySelector('.fill').style.width = percentString;
+  seekBar.querySelector('.thumb').style.left = percentString;
+  // Keep aria-valuenow in sync for screen readers / keyboard.
+  seekBar.setAttribute('aria-valuenow', String(Math.round(percent)));
+}
+
+// Returns 'seek' for the song-progress bar, 'volume' for the volume
+// bar — both use the same .seek-bar class so we look at the parent.
+function seekBarKind(seekBar) {
+  return seekBar.parentElement.classList.contains('seek-control') ? 'seek' : 'volume';
+}
+
+// Apply a 0–1 ratio to whichever bar was interacted with: jumps the
+// song position or sets player volume. Also updates the visual fill +
+// aria-valuenow via updateSeekPercentage.
+function applySeekRatio(seekBar, ratio) {
+  ratio = Math.max(0, Math.min(1, ratio));
+  if (seekBarKind(seekBar) === 'seek') {
+    if (currentSoundFile) {
+      seek(ratio * currentSoundFile.duration);
+    }
+  } else {
+    const volume = ratio * 100;
+    setVolume(volume);
+    currentVolume = volume; // persist so the next setSong() respects it
+  }
+  updateSeekPercentage(seekBar, ratio);
+}
+
+function ratioFromPointerEvent(seekBar, event) {
+  const rect = seekBar.getBoundingClientRect();
+  // pageX includes scroll; rect.left is viewport-relative.
+  const offsetX = event.pageX - (rect.left + window.scrollX);
+  return offsetX / rect.width;
+}
+
+function setupSeekBars() {
+  const seekBars = $$('.player-bar .seek-bar');
+
+  seekBars.forEach((seekBar) => {
+    // Click anywhere along the bar.
+    seekBar.addEventListener('click', function(event) {
+      applySeekRatio(this, ratioFromPointerEvent(this, event));
+    });
+
+    // Drag the thumb. Listeners on document, scoped to this drag
+    // gesture — they remove themselves on mouseup.
+    seekBar.querySelector('.thumb').addEventListener('mousedown', () => {
+      const bar = seekBar;
+
+      function onMove(event) {
+        applySeekRatio(bar, ratioFromPointerEvent(bar, event));
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
+    // Keyboard support — WAI-ARIA slider pattern. Arrows nudge 5%,
+    // PageUp/Down jump 10%, Home/End jump to extremes.
+    seekBar.addEventListener('keydown', function(event) {
+      let step;
+      switch (event.key) {
+        case 'ArrowLeft':
+        case 'ArrowDown':
+          step = -5; break;
+        case 'ArrowRight':
+        case 'ArrowUp':
+          step = 5; break;
+        case 'PageDown':
+          step = -10; break;
+        case 'PageUp':
+          step = 10; break;
+        case 'Home':
+          step = -100; break; // clamps to 0
+        case 'End':
+          step = 100; break;  // clamps to 100
+        default:
+          return;
+      }
+      event.preventDefault();
+
+      const currentValue = parseInt(this.getAttribute('aria-valuenow'), 10) || 0;
+      const newValue = Math.max(0, Math.min(100, currentValue + step));
+      applySeekRatio(this, newValue / 100);
+    });
+  });
+}
+
+// ---- player bar readouts ----
+function setCurrentTimeInPlayerBar(currentTime) {
+  if (currentSoundFile) {
+    $('.current-time').textContent = filterTimeCode(currentTime);
+  }
+}
+
+function setTotalTimeInPlayerBar(totalTime) {
+  if (currentSoundFile) {
+    $('.total-time').textContent = filterTimeCode(totalTime);
+  }
+}
+
+// ---- player bar control handlers ----
+function togglePlayFromPlayerBar() {
+  // Cold start: nothing loaded yet. Treat the first ▶ click as
+  // "start the album" — load song 1 and play it.
+  if (!currentSoundFile) {
+    setSong(1);
     currentSoundFile.play();
     updateSeekBarWhileSongPlays();
-    updatePlayerBarSong();
-
-    //update song buttons after choosing new song
     setSongButton(getSongButton(currentlyPlayingSongNumber), 'pause');
-    setSongButton(getSongButton(previousSongNumber), 'number');
-};
+    updatePlayerBarSong(); // flips play-pause to 'playing' too
+    return;
+  }
 
-var previousSong = function() {
+  const currentSongBtn = getSongButton(currentlyPlayingSongNumber);
 
-    var getPreviousSongNumber = function(newIndex) {
-        return newIndex === currentAlbum.songs.length - 1 ? 1 : newIndex + 2;
-    };
-
-    var currentSongIndex = trackIndex(currentAlbum, currentSongFromAlbum);
-
-    currentSongIndex--;
-
-    if (currentSongIndex < 0) {
-        currentSongIndex = currentAlbum.songs.length - 1;
-    }
-
-    var previousSongNumber = getPreviousSongNumber(currentSongIndex);
-
-    // Set a new current song. assigns value to currentlyPlayingSongNumber and currentSoundFile.  Sets volume level
-    setSong(currentSongIndex + 1);
-
+  if (currentSoundFile.paused) {
+    setSongButton(currentSongBtn, 'pause');
+    setPlayPauseButton('playing');
     currentSoundFile.play();
     updateSeekBarWhileSongPlays();
-    updatePlayerBarSong();
+  } else {
+    setSongButton(currentSongBtn, 'play');
+    setPlayPauseButton('paused');
+    currentSoundFile.pause();
+  }
+}
 
-    setSongButton(getSongButton(currentlyPlayingSongNumber), 'pause');
-    setSongButton(getSongButton(previousSongNumber), 'number');
-};
+function trackIndex(album, song) {
+  return album.songs.indexOf(song);
+}
 
-// Pull the requested album id from the URL (?album=<id>); fall back
-// to defaultAlbumId if missing/unknown. Imports come from fixtures.js
-// at the top of the file — no more window.BlocJams namespace.
-//
-// Phase 5 will swap this body for resolveAlbumFromUrl() from
-// scripts/lib/album-selection.js (already extracted and tested).
-var getRequestedAlbum = function() {
-    var match = /[?&]album=([^&]+)/.exec(window.location.search);
-    var requestedId = match ? decodeURIComponent(match[1]) : null;
+function nextSong() {
+  const currentIndex = trackIndex(currentAlbum, currentSongFromAlbum);
+  const { nextIndex, previousNumber } = getNextSongPositions(currentIndex, currentAlbum.songs.length);
 
-    if (requestedId && albums[requestedId]) {
-        return albums[requestedId];
-    }
-    if (albums[defaultAlbumId]) {
-        return albums[defaultAlbumId];
-    }
-    // Last-resort fallback. Should never trigger now that albums is
-    // statically imported.
-    return albumPicasso || null;
-};
+  setSong(nextIndex + 1);
+  currentSoundFile.play();
+  updateSeekBarWhileSongPlays();
+  updatePlayerBarSong();
 
-$(document).ready(function() {
-    var album = getRequestedAlbum();
-    if (album) {
-        setCurrentAlbum(album);
-    } else {
-        console.error('No album available — fixtures.js may not have loaded.');
-    }
-    setupSeekBars();
-    $previousButton.click(previousSong);
-    $nextButton.click(nextSong);
-    $playPauseButton.click(togglePlayFromPlayerBar);
-});
+  setSongButton(getSongButton(currentlyPlayingSongNumber), 'pause');
+  if (previousNumber !== null) {
+    setSongButton(getSongButton(previousNumber), 'number');
+  }
+}
+
+function previousSong() {
+  const currentIndex = trackIndex(currentAlbum, currentSongFromAlbum);
+  const { nextIndex, previousNumber } = getPreviousSongPositions(currentIndex, currentAlbum.songs.length);
+
+  setSong(nextIndex + 1);
+  currentSoundFile.play();
+  updateSeekBarWhileSongPlays();
+  updatePlayerBarSong();
+
+  setSongButton(getSongButton(currentlyPlayingSongNumber), 'pause');
+  if (previousNumber !== null) {
+    setSongButton(getSongButton(previousNumber), 'number');
+  }
+}
+
+// ---- init ----
+function init() {
+  previousButton = $('.main-controls .previous');
+  playPauseButton = $('.main-controls .play-pause');
+  nextButton = $('.main-controls .next');
+
+  const album = resolveAlbumFromUrl(window.location.search, albums, defaultAlbumId)
+    || albumPicasso;
+  if (album) {
+    setCurrentAlbum(album);
+  } else {
+    console.error('No album available — fixtures.js may not have loaded.');
+  }
+
+  setupSeekBars();
+  previousButton.addEventListener('click', previousSong);
+  nextButton.addEventListener('click', nextSong);
+  playPauseButton.addEventListener('click', togglePlayFromPlayerBar);
+}
+
+// Module scripts are deferred by default, so the DOM is parsed by the
+// time this runs. Guard the readyState transition anyway.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
