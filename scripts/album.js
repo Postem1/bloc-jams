@@ -1,4 +1,4 @@
-'use strict';
+import { albums, defaultAlbumId, albumPicasso } from './fixtures.js';
 
 // ---- inner-content snippets (swap into existing <button> wrappers) ----
 var PLAY_ICON = '<span class="ion-play" aria-hidden="true"></span>';
@@ -435,22 +435,24 @@ var previousSong = function() {
 };
 
 // Pull the requested album id from the URL (?album=<id>); fall back
-// to BlocJams.defaultAlbumId if missing/unknown.
+// to defaultAlbumId if missing/unknown. Imports come from fixtures.js
+// at the top of the file — no more window.BlocJams namespace.
+//
+// Phase 5 will swap this body for resolveAlbumFromUrl() from
+// scripts/lib/album-selection.js (already extracted and tested).
 var getRequestedAlbum = function() {
     var match = /[?&]album=([^&]+)/.exec(window.location.search);
     var requestedId = match ? decodeURIComponent(match[1]) : null;
-    var catalog = (window.BlocJams && window.BlocJams.albums) || {};
-    var fallbackId = (window.BlocJams && window.BlocJams.defaultAlbumId) || null;
 
-    if (requestedId && catalog[requestedId]) {
-        return catalog[requestedId];
+    if (requestedId && albums[requestedId]) {
+        return albums[requestedId];
     }
-    if (fallbackId && catalog[fallbackId]) {
-        return catalog[fallbackId];
+    if (albums[defaultAlbumId]) {
+        return albums[defaultAlbumId];
     }
-    // Last-resort fallback for safety — fixtures.js still exports this
-    // legacy global as an alias.
-    return typeof albumPicasso !== 'undefined' ? albumPicasso : null;
+    // Last-resort fallback. Should never trigger now that albums is
+    // statically imported.
+    return albumPicasso || null;
 };
 
 $(document).ready(function() {
