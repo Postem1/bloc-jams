@@ -92,7 +92,7 @@ var createSongRow = function(songNumber, songName, songLength) {
         // choosing a new song
         if (currentlyPlayingSongNumber !== songNumber) {
             setSong(songNumber); //assigns value to assigns value to currentSoundFile, currentlyPlayingSongNumber
-+           currentSoundFile.play();
+            currentSoundFile.play();
             updateSeekBarWhileSongPlays();
             $(this).html(pauseButtonTemplate); //adds Pause button to indicate new song is playing.
             currentSongFromAlbum = currentAlbum.songs[songNumber - 1];
@@ -160,7 +160,7 @@ var setCurrentAlbum = function(album) { // album is an object with many properti
     $albumArtist.text(album.artist);
     $albumReleaseInfo.text(album.year + ' ' + album.label);
     $albumImage.attr('src', album.albumArtUrl);
-    $albumSongList.empty; // be sure no songs are currently in the element
+    $albumSongList.empty(); // be sure no songs are currently in the element
 
     // goes through all the songs from the specified album object. Insert them into the HTML, one by one.
     for (var i = 0; i < album.songs.length; i++) {
@@ -231,7 +231,7 @@ var setupSeekBars = function() {
             if ($seekBar.parent().attr('class') == 'seek-control') {
                 seek(seekBarFillRatio * currentSoundFile.getDuration());
             } else {
-                setVolume(seekBarFillRatio);
+                setVolume(seekBarFillRatio * 100);
             }
 
         updateSeekPercentage($seekBar, seekBarFillRatio);
@@ -319,7 +319,7 @@ var nextSong = function() {
 
     $('.currently-playing .song-name').text(currentSongFromAlbum.title);
     $('.currently-playing .artist-name').text(currentAlbum.artist);
-    $('.currently-playing .artist-song-mobile').text(currentSongFromAlbum.title + " - " + currentAlbum.title);
+    $('.currently-playing .artist-song-mobile').text(currentSongFromAlbum.title + " - " + currentAlbum.artist);
     $('.main-controls .play-pause').html(playerBarPauseButton);
 
     var lastSongNumber = getLastSongNumber(currentSongIndex);
@@ -354,7 +354,7 @@ var previousSong = function() {
 
     $('.currently-playing .song-name').text(currentSongFromAlbum.title);
     $('.currently-playing .artist-name').text(currentAlbum.artist);
-    $('.currently-playing .artist-song-mobile').text(currentSongFromAlbum.title + " - " + currentAlbum.title);
+    $('.currently-playing .artist-song-mobile').text(currentSongFromAlbum.title + " - " + currentAlbum.artist);
     $('.main-controls .play-pause').html(playerBarPauseButton);
 
     var lastSongNumber = getLastSongNumber(currentSongIndex);
