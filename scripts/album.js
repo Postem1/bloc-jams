@@ -8,8 +8,14 @@ var PAUSE_ICON = '<span class="ion-pause" aria-hidden="true"></span>';
 var currentlyPlayingSongNumber = null;
 var currentAlbum = null;
 var currentSongFromAlbum = null;
-var currentSoundFile = null; // buzz.sound instance
-var currentVolume = 50;
+var currentSoundFile = null; // HTMLAudioElement
+var currentVolume = 50; // 0–100; converted to 0–1 for audio.volume
+
+// Reference to the active timeupdate listener so we can remove the
+// previous one before adding a new one (HTMLAudioElement doesn't have
+// the equivalent of Buzz's .unbind('timeupdate') that drops all
+// listeners by event name).
+var timeUpdateHandler = null;
 
 // ---- cached player-bar selectors ----
 var $previousButton = $('.main-controls .previous');
@@ -19,13 +25,15 @@ var $nextButton = $('.main-controls .next');
 // ---- low-level player ops ----
 var seek = function(time) {
     if (currentSoundFile) {
-        currentSoundFile.setTime(time);
+        currentSoundFile.currentTime = time;
     }
 };
 
 var setVolume = function(volume) {
     if (currentSoundFile) {
-        currentSoundFile.setVolume(volume);
+        // HTMLAudioElement.volume is 0–1; callers pass 0–100 (matches
+        // the % the UI shows and what Buzz used to take).
+        currentSoundFile.volume = Math.max(0, Math.min(1, volume / 100));
     }
 };
 
@@ -72,14 +80,17 @@ var setPlayPauseButton = function(state) {
 // assigns value to currentlyPlayingSongNumber and currentSoundFile.  Sets volume level
 var setSong = function(songNumber) {
     if (currentSoundFile) {
-        currentSoundFile.stop();
+        currentSoundFile.pause(); // stop the old element before discarding
     }
+    // New audio element → no listener attached yet. Clear the ref so
+    // updateSeekBarWhileSongPlays doesn't try to remove a listener from
+    // the new element using a stale handler from the old one.
+    timeUpdateHandler = null;
+
     currentlyPlayingSongNumber = parseInt(songNumber);
     currentSongFromAlbum = currentAlbum.songs[songNumber - 1];
-    currentSoundFile = new buzz.sound(currentSongFromAlbum.audioUrl, {
-        formats: ['mp3'],
-        preload: true
-    });
+    currentSoundFile = new Audio(currentSongFromAlbum.audioUrl);
+    currentSoundFile.preload = 'auto'; // match Buzz's old default
     setVolume(currentVolume);
 };
 
@@ -133,7 +144,7 @@ var createSongRow = function(songNumber, songName, songLength) {
 
         } else {
             // Re-clicked the currently-loaded song: toggle play/pause.
-            if (currentSoundFile.isPaused()) {
+            if (currentSoundFile.paused) {
                 setSongButton($btn, 'pause');
                 setPlayPauseButton('playing');
                 currentSoundFile.play();
@@ -197,22 +208,28 @@ var setCurrentAlbum = function(album) { // album is an object with many properti
 };
 
 var updateSeekBarWhileSongPlays = function() {
-    if (currentSoundFile) {
-        // Unbind any previously-attached timeupdate handler before
-        // re-binding — otherwise pause/resume cycles on the same
-        // buzz.sound instance accumulate listeners.
-        currentSoundFile.unbind('timeupdate');
-        //timeupdate is a custom Buzz event that fires repeatedly while time elapses during song playback
-        currentSoundFile.bind('timeupdate', function() {
-        // We use Buzz's getTime()  to get the current time of the song and
-        // getDuration() method for getting the total length of the song. Both values return time in seconds.
-            var seekBarFillRatio = this.getTime() / this.getDuration();
-            var $seekBar = $('.seek-control .seek-bar');
+    if (!currentSoundFile) return;
 
-            updateSeekPercentage($seekBar, seekBarFillRatio);
-            setCurrentTimeInPlayerBar(this.getTime()); // current time element updates with song playback.
-        });
+    // Remove the previous handler before adding a new one — otherwise
+    // pause/resume cycles on the same HTMLAudioElement would stack
+    // listeners. (When setSong creates a new element, timeUpdateHandler
+    // is reset to null so this branch is a no-op.)
+    if (timeUpdateHandler) {
+        currentSoundFile.removeEventListener('timeupdate', timeUpdateHandler);
     }
+
+    // Use a named handler so we can remove it specifically later.
+    timeUpdateHandler = function() {
+        // `duration` is NaN until metadata loads; guard against that.
+        var duration = currentSoundFile.duration;
+        var ratio = (duration > 0 && Number.isFinite(duration))
+            ? currentSoundFile.currentTime / duration
+            : 0;
+        var $seekBar = $('.seek-control .seek-bar');
+        updateSeekPercentage($seekBar, ratio);
+        setCurrentTimeInPlayerBar(currentSoundFile.currentTime);
+    };
+    currentSoundFile.addEventListener('timeupdate', timeUpdateHandler);
 };
 
 var updateSeekPercentage = function($seekBar, seekBarFillRatio) {
@@ -244,7 +261,7 @@ var applySeekRatio = function($seekBar, ratio) {
     ratio = Math.max(0, Math.min(1, ratio));
     if (seekBarKind($seekBar) === 'seek') {
         if (currentSoundFile) {
-            seek(ratio * currentSoundFile.getDuration());
+            seek(ratio * currentSoundFile.duration);
         }
     } else {
         var volume = ratio * 100;
@@ -357,7 +374,7 @@ var togglePlayFromPlayerBar = function() {
 
     var $currentSongBtn = getSongButton(currentlyPlayingSongNumber);
 
-    if (currentSoundFile.isPaused()) {
+    if (currentSoundFile.paused) {
         setSongButton($currentSongBtn, 'pause');
         setPlayPauseButton('playing');
         currentSoundFile.play();
