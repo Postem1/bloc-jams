@@ -1,48 +1,71 @@
 // Renders the collection grid from the album catalog. Each tile
-// links to album.html?album=<id> so clicking through actually opens
-// the right album (previously every tile was an identical placeholder).
+// links to album.html?album=<id> so clicking through opens that
+// specific album. Vanilla DOM — no jQuery.
 
 import { albums, albumOrder } from './fixtures.js';
 
 function buildCollectionTile(albumId, album) {
-    var href = 'album.html?album=' + encodeURIComponent(albumId);
+  const href = `album.html?album=${encodeURIComponent(albumId)}`;
 
-    var $tile = $('<div>').addClass('collection-album-container column fourth');
+  const tile = document.createElement('div');
+  tile.className = 'collection-album-container column fourth';
 
-    var $img = $('<img>').attr({
-        src: album.albumArtUrl,
-        alt: album.title + ' album cover'
-    });
-    $tile.append($img);
+  const img = document.createElement('img');
+  img.src = album.albumArtUrl;
+  img.alt = `${album.title} album cover`;
+  tile.append(img);
 
-    // Caption: built with $('<a>').text(...) so album titles and
-    // artist names from the fixture are inserted as text, not HTML.
-    // If the catalog ever comes from a server or user input, this
-    // structure stays safe.
-    var $info = $('<div>').addClass('collection-album-info caption');
-    var $p = $('<p>');
+  // Caption is structurally identical to the old jQuery version so
+  // collection.css's selectors (.caption p, .caption p a.album-name)
+  // still apply. Text content is set via .textContent / a TextNode,
+  // never via innerHTML — keeps the tile XSS-safe even if the
+  // catalog ever comes from a server.
+  const info = document.createElement('div');
+  info.className = 'collection-album-info caption';
 
-    $p
-        .append($('<a>').addClass('album-name').attr('href', href).text(album.title))
-        .append('<br>')
-        .append($('<a>').attr('href', href).text(album.artist))
-        .append('<br>')
-        .append(document.createTextNode(album.songs.length + ' songs'));
+  const p = document.createElement('p');
 
-    $info.append($p);
-    $tile.append($info);
+  const titleLink = document.createElement('a');
+  titleLink.className = 'album-name';
+  titleLink.href = href;
+  titleLink.textContent = album.title;
+  p.append(titleLink);
 
-    return $tile;
+  p.append(document.createElement('br'));
+
+  const artistLink = document.createElement('a');
+  artistLink.href = href;
+  artistLink.textContent = album.artist;
+  p.append(artistLink);
+
+  p.append(document.createElement('br'));
+  p.append(document.createTextNode(`${album.songs.length} songs`));
+
+  info.append(p);
+  tile.append(info);
+
+  return tile;
 }
 
-$(window).on('load', function() {
-    var $container = $('.album-covers');
-    $container.empty();
+function init() {
+  const container = document.querySelector('.album-covers');
+  if (!container) return;
+  container.replaceChildren();
 
-    albumOrder.forEach(function(albumId) {
-        var album = albums[albumId];
-        if (album) {
-            $container.append(buildCollectionTile(albumId, album));
-        }
-    });
-});
+  albumOrder.forEach((albumId) => {
+    const album = albums[albumId];
+    if (album) {
+      container.append(buildCollectionTile(albumId, album));
+    }
+  });
+}
+
+// Match the prior $(window).on('load', ...) timing — wait for the
+// full window load so any background images styling the page are in
+// place before the grid renders. Modules are auto-deferred, so we
+// won't miss the load event.
+if (document.readyState === 'complete') {
+  init();
+} else {
+  window.addEventListener('load', init);
+}
